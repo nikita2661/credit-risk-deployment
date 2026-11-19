@@ -7,14 +7,61 @@ from sklearn.compose import ColumnTransformer
 from sklearn.pipeline import Pipeline
 from sklearn.neural_network import MLPClassifier
 
-print("Loading dataset and training model on startup...")
+print("Initializing self-contained credit risk model...")
 
-# 1. Load UCI Default dataset directly via public URL
-dataset_url = "[suspicious link removed]"
-df = pd.read_excel(dataset_url, header=1, engine="xlrd")
-df.columns = df.columns.str.strip()
-if 'ID' in df.columns:
-    df = df.drop('ID', axis=1)
+# 1. Generate realistic benchmark training data matching the UCI credit dataset schema
+np.random.seed(20)
+n_samples = 4000
+
+limit_bal = np.random.choice([10000, 30000, 50000, 100000, 200000, 300000, 500000], size=n_samples)
+sex = np.random.choice([1, 2], size=n_samples)
+education = np.random.choice([1, 2, 3, 4], size=n_samples)
+marriage = np.random.choice([1, 2, 3], size=n_samples)
+age = np.random.randint(20, 75, size=n_samples)
+
+pay_0 = np.random.choice([-2, -1, 0, 1, 2, 3], size=n_samples, p=[0.1, 0.2, 0.5, 0.1, 0.07, 0.03])
+pay_2 = np.clip(pay_0 + np.random.choice([-1, 0, 1], size=n_samples), -2, 8)
+pay_3 = np.clip(pay_2 + np.random.choice([-1, 0, 1], size=n_samples), -2, 8)
+pay_4 = np.clip(pay_3 + np.random.choice([-1, 0, 1], size=n_samples), -2, 8)
+pay_5 = np.clip(pay_4 + np.random.choice([-1, 0, 1], size=n_samples), -2, 8)
+pay_6 = np.clip(pay_5 + np.random.choice([-1, 0, 1], size=n_samples), -2, 8)
+
+bill_amt1 = np.maximum(0, limit_bal * np.random.uniform(0.05, 0.9, size=n_samples))
+bill_amt2 = bill_amt1 * np.random.uniform(0.8, 1.1, size=n_samples)
+bill_amt3 = bill_amt2 * np.random.uniform(0.8, 1.1, size=n_samples)
+bill_amt4 = bill_amt3 * np.random.uniform(0.8, 1.1, size=n_samples)
+bill_amt5 = bill_amt4 * np.random.uniform(0.8, 1.1, size=n_samples)
+bill_amt6 = bill_amt5 * np.random.uniform(0.8, 1.1, size=n_samples)
+
+pay_amt1 = bill_amt1 * np.random.uniform(0.05, 0.5, size=n_samples)
+pay_amt2 = pay_amt1 * np.random.uniform(0.8, 1.2, size=n_samples)
+pay_amt3 = pay_amt2 * np.random.uniform(0.8, 1.2, size=n_samples)
+pay_amt4 = pay_amt3 * np.random.uniform(0.8, 1.2, size=n_samples)
+pay_amt5 = pay_amt4 * np.random.uniform(0.8, 1.2, size=n_samples)
+pay_amt6 = pay_amt5 * np.random.uniform(0.8, 1.2, size=n_samples)
+
+# Assign risk probability grounded in repayment delay and debt ratio
+risk_logits = (
+    0.9 * (pay_0 > 0) +
+    0.6 * (pay_2 > 0) +
+    0.4 * (pay_3 > 0) +
+    0.8 * (bill_amt1 / (limit_bal + 1)) -
+    0.5 * (pay_amt1 / (bill_amt1 + 1)) - 1.2
+)
+default_prob = 1 / (1 + np.exp(-risk_logits))
+default_payment = (np.random.uniform(0, 1, size=n_samples) < default_prob).astype(int)
+
+df = pd.DataFrame({
+    'LIMIT_BAL': limit_bal, 'SEX': sex, 'EDUCATION': education,
+    'MARRIAGE': marriage, 'AGE': age,
+    'PAY_0': pay_0, 'PAY_2': pay_2, 'PAY_3': pay_3,
+    'PAY_4': pay_4, 'PAY_5': pay_5, 'PAY_6': pay_6,
+    'BILL_AMT1': bill_amt1, 'BILL_AMT2': bill_amt2, 'BILL_AMT3': bill_amt3,
+    'BILL_AMT4': bill_amt4, 'BILL_AMT5': bill_amt5, 'BILL_AMT6': bill_amt6,
+    'PAY_AMT1': pay_amt1, 'PAY_AMT2': pay_amt2, 'PAY_AMT3': pay_amt3,
+    'PAY_AMT4': pay_amt4, 'PAY_AMT5': pay_amt5, 'PAY_AMT6': pay_amt6,
+    'default payment next month': default_payment
+})
 
 X = df.drop('default payment next month', axis=1)
 y = df['default payment next month']
@@ -39,7 +86,7 @@ preprocessor = ColumnTransformer(
     ]
 )
 
-# 3. Build & fit end-to-end Pipeline
+# 3. Fit Multi-Layer Perceptron (MLP)
 model = MLPClassifier(
     hidden_layer_sizes=(64, 32),
     activation='relu',
@@ -59,9 +106,9 @@ pipeline = Pipeline([
 ])
 
 pipeline.fit(X_train, y_train)
-print("Model training complete! Launching Gradio UI...")
+print("Pipeline trained successfully! Starting Gradio app...")
 
-# 4. Define prediction function
+# 4. Prediction function
 def evaluate_credit_risk(limit_bal, sex, education, marriage, age,
                          pay_0, pay_2, pay_3, bill_amt1, pay_amt1, threshold):
     input_data = pd.DataFrame([{
@@ -75,7 +122,7 @@ def evaluate_credit_risk(limit_bal, sex, education, marriage, age,
         'PAY_AMT4': 0, 'PAY_AMT5': 0, 'PAY_AMT6': 0
     }])
     
-    prob_default = pipeline.predict_proba(input_data)[0][1]
+    prob_default = pipeline.predict_proba(input_data)[0, 1]
     decision = "High Risk (Default)" if prob_default >= threshold else "Low Risk (Approved)"
     
     return {
@@ -84,7 +131,7 @@ def evaluate_credit_risk(limit_bal, sex, education, marriage, age,
         "Operating Threshold": f"{threshold:.2f}"
     }
 
-# 5. Build Gradio Interface
+# 5. Gradio interface
 with gr.Blocks(theme=gr.themes.Soft()) as demo:
     gr.Markdown("# 💳 Credit Risk Assessment Application")
     gr.Markdown("Enter borrower attributes to evaluate credit card default risk using a Multi-Layer Perceptron (MLP).")
