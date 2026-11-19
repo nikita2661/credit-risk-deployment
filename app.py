@@ -1,3 +1,4 @@
+import spaces
 import gradio as gr
 import pandas as pd
 import numpy as np
@@ -9,11 +10,11 @@ from sklearn.neural_network import MLPClassifier
 
 print("Initializing self-contained credit risk model...")
 
-# 1. Generate realistic benchmark training data matching the UCI credit dataset schema
+# 1. Generate benchmark training data matching UCI credit dataset schema
 np.random.seed(20)
 n_samples = 4000
 
-limit_bal = np.random.choice([10000, 30000, 50000, 100000, 200000, 300000, 500000], size=n_samples)
+limit_bal = np.random.choice([10000, 20000, 30000, 50000, 100000, 200000, 300000, 500000], size=n_samples)
 sex = np.random.choice([1, 2], size=n_samples)
 education = np.random.choice([1, 2, 3, 4], size=n_samples)
 marriage = np.random.choice([1, 2, 3], size=n_samples)
@@ -40,7 +41,6 @@ pay_amt4 = pay_amt3 * np.random.uniform(0.8, 1.2, size=n_samples)
 pay_amt5 = pay_amt4 * np.random.uniform(0.8, 1.2, size=n_samples)
 pay_amt6 = pay_amt5 * np.random.uniform(0.8, 1.2, size=n_samples)
 
-# Assign risk probability grounded in repayment delay and debt ratio
 risk_logits = (
     0.9 * (pay_0 > 0) +
     0.6 * (pay_2 > 0) +
@@ -108,7 +108,8 @@ pipeline = Pipeline([
 pipeline.fit(X_train, y_train)
 print("Pipeline trained successfully! Starting Gradio app...")
 
-# 4. Prediction function
+# 4. ZeroGPU decorated prediction function
+@spaces.GPU
 def evaluate_credit_risk(limit_bal, sex, education, marriage, age,
                          pay_0, pay_2, pay_3, bill_amt1, pay_amt1, threshold):
     input_data = pd.DataFrame([{
@@ -122,7 +123,7 @@ def evaluate_credit_risk(limit_bal, sex, education, marriage, age,
         'PAY_AMT4': 0, 'PAY_AMT5': 0, 'PAY_AMT6': 0
     }])
     
-    prob_default = pipeline.predict_proba(input_data)[0, 1]
+    prob_default = pipeline.predict_proba(input_data)[0][1]
     decision = "High Risk (Default)" if prob_default >= threshold else "Low Risk (Approved)"
     
     return {
